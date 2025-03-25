@@ -70,7 +70,7 @@ class SheetManager:
         """
         try:
             self.gc = get_gspread_client()
-            self.sh = self.gc.open(SPREADSHEET_NAME)
+            self.sh = self.gc.open(wecledger)
 
             # Users worksheet
             try:
