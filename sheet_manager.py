@@ -32,7 +32,8 @@ def get_gspread_client():
 # Constants / Globals
 ################################################################################
 
-SPREADSHEET_NAME = "WeCoinSystem"  # Modify if your spreadsheet is named differently
+# CHANGED HERE:
+SPREADSHEET_NAME = "wecledger"  # <-- uses your desired spreadsheet name
 
 # Concurrency lock for all sheet operations
 sheet_lock = threading.Lock()
@@ -170,4 +171,140 @@ def create_user_row(user_id, starting_balance=400000):
     except Exception as e:
         raise SheetError(f"Error creating user row for {user_id}: {e}")
 
-def get_user_data(user_id, max_cache_age=MAX_
+def get_user_data(user_id, max_cache_age=MAX_CACHE_AGE_SECONDS):
+    """
+    Returns the user's data, caching for 'max_cache_age' seconds to reduce read calls.
+    Creates the user row if not found.
+    """
+    now_ts = time.time()
+    cached = user_cache.get(user_id)
+    if cached:
+        if now_ts - cached["last_fetch"] < max_cache_age:
+            return cached["data"]
+
+    # Not cached or stale => check sheet
+    row_num = find_user_row(user_id)
+    if not row_num:
+        # user doesn't exist => create row
+        create_user_row(user_id)
+        row_num = find_user_row(user_id)
+
+    user_dict = read_user_row(row_num)
+    user_cache[user_id] = {
+        "data": user_dict,
+        "row_num": row_num,
+        "last_fetch": now_ts
+    }
+    return user_dict
+
+def update_user_data(user_dict):
+    """
+    Push updated user_dict to the sheet & refresh the local cache.
+    """
+    user_id = user_dict["user_id"]
+    cached = user_cache.get(user_id)
+    if not cached:
+        row_num = find_user_row(user_id)
+        if not row_num:
+            create_user_row(user_id, user_dict["balance"])
+            row_num = find_user_row(user_id)
+        user_cache[user_id] = {
+            "data": user_dict,
+            "row_num": row_num,
+            "last_fetch": time.time()
+        }
+    else:
+        row_num = cached["row_num"]
+
+    update_user_row(row_num, user_dict)
+    user_cache[user_id]["data"] = user_dict
+    user_cache[user_id]["last_fetch"] = time.time()
+
+################################################################################
+# Ledger Data
+################################################################################
+
+def get_ledger_data():
+    """
+    Returns all ledger rows from the 'Ledger' sheet, caching them for LEDGER_CACHE_TTL seconds.
+    """
+    now_ts = time.time()
+    if (now_ts - ledger_cache["last_fetch"] < LEDGER_CACHE_TTL) and ledger_cache["rows"]:
+        return ledger_cache["rows"]
+
+    try:
+        with sheet_lock:
+            rows = sheet_mgr.ledger_ws.get_all_values()
+        data_rows = rows[1:]  # skip header
+        ledger_cache["rows"] = data_rows
+        ledger_cache["last_fetch"] = now_ts
+        return data_rows
+    except Exception as e:
+        raise SheetError(f"Error reading ledger data: {e}")
+
+def append_ledger(user_id, action_type, pr_or_ea_id, amount_awarded, notes=""):
+    """
+    Appends a row to 'Ledger' with timestamp, user_id, action_type, etc.
+    Invalidates ledger cache so next read is fresh.
+    """
+    timestamp = datetime.now().isoformat()
+    row_data = [timestamp, user_id, action_type, pr_or_ea_id, amount_awarded, notes]
+    try:
+        with sheet_lock:
+            sheet_mgr.ledger_ws.append_row(row_data, value_input_option="RAW")
+        ledger_cache["rows"] = []
+        ledger_cache["last_fetch"] = 0
+    except Exception as e:
+        raise SheetError(f"Error appending ledger row: {e}")
+
+################################################################################
+# Simulation Data (hour-based logic)
+################################################################################
+
+def read_simulation_data():
+    """
+    Read hour_index, hour_awarding_so_far, current_multiplier from row 2 of 'Simulation'.
+    """
+    try:
+        with sheet_lock:
+            row_values = sheet_mgr.sim_ws.row_values(2)
+        hour_idx = int(row_values[0]) if row_values[0] else 0
+        hour_award = float(row_values[1]) if row_values[1] else 0.0
+        curr_mult = float(row_values[2]) if row_values[2] else 1.0
+        return {
+            "hour_index": hour_idx,
+            "hour_awarding_so_far": hour_award,
+            "current_multiplier": curr_mult
+        }
+    except Exception as e:
+        raise SheetError(f"Error reading simulation data: {e}")
+
+def write_simulation_data(sim_dict):
+    row_values = [
+        sim_dict.get("hour_index", 0),
+        sim_dict.get("hour_awarding_so_far", 0.0),
+        sim_dict.get("current_multiplier", 1.0)
+    ]
+    try:
+        with sheet_lock:
+            sheet_mgr.sim_ws.update("A2:C2", [row_values], value_input_option="RAW")
+    except Exception as e:
+        raise SheetError(f"Error writing simulation data: {e}")
+
+def get_simulation_data():
+    """
+    Returns simulation data from cache or from sheet if stale.
+    """
+    now_ts = time.time()
+    if (now_ts - simulation_cache["last_fetch"] < SIM_CACHE_TTL) and simulation_cache["data"]:
+        return simulation_cache["data"]
+
+    data = read_simulation_data()
+    simulation_cache["data"] = data
+    simulation_cache["last_fetch"] = now_ts
+    return data
+
+def update_simulation_data(sim_data):
+    write_simulation_data(sim_data)
+    simulation_cache["data"] = sim_data
+    simulation_cache["last_fetch"] = time.time()
