@@ -1,6 +1,13 @@
 import streamlit as st
 import json
 
+from sheet_manager import (
+    get_user_data, update_user_data,
+    append_ledger, get_simulation_data, update_simulation_data,
+    SheetError
+)
+
+
 from awarding_logic import (
     register_user, post_pr, post_ea, view_wallet, dev_override, CONFIG
 )
