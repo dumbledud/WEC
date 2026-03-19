@@ -1,25 +1,41 @@
 import streamlit as st
-from datetime import datetime
-from sheet_manager import init_sheets, register_user, post_pr, get_balance
 
+from sheet_manager import get_balance, init_sheets, post_pr, register_user
+
+st.set_page_config(page_title="WeCoin MVP")
 st.title("WeCoin MVP")
+st.caption("A minimal Streamlit app for registering users, posting PRs, and checking balances.")
 
 init_sheets()
 
 menu = st.sidebar.selectbox("Menu", ["Register", "Post PR", "View Balance"])
-
-user_id = st.text_input("Enter your user ID:")
+user_id = st.text_input("Enter your user ID:").strip()
 
 if menu == "Register":
     if st.button("Register"):
-        register_user(user_id)
-        st.success(f"User {user_id} registered!")
+        if not user_id:
+            st.error("Please enter a user ID before registering.")
+        else:
+            created = register_user(user_id)
+            if created:
+                st.success(f"User {user_id} registered!")
+            else:
+                st.info(f"User {user_id} is already registered.")
 
 elif menu == "Post PR":
     if st.button("Post Personal Record"):
-        post_pr(user_id)
-        st.success("PR posted!")
+        if not user_id:
+            st.error("Please enter a user ID before posting a PR.")
+        else:
+            awarded = post_pr(user_id)
+            if awarded:
+                st.success("PR posted!")
+            else:
+                st.error("User not found. Please register first.")
 
 elif menu == "View Balance":
-    balance = get_balance(user_id)
-    st.write(f"User {user_id} has {balance} WeCoin")
+    if not user_id:
+        st.info("Enter a user ID to view the current balance.")
+    else:
+        balance = get_balance(user_id)
+        st.write(f"User {user_id} has {balance} WeCoin")
